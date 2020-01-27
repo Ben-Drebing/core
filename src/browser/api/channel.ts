@@ -4,12 +4,12 @@ import ofEvents from '../of_events';
 import route from '../../common/route';
 import { AckFunc, NackFunc, AckMessage, AckPayload, NackPayload } from '../api_protocol/transport_strategy/ack';
 import { sendToIdentity } from '../api_protocol/api_handlers/api_protocol_base';
-import { getExternalOrOfWindowIdentity } from '../core_state';
+import { getEntityIdentity } from '../core_state';
 import SubscriptionManager from '../subscription_manager';
+import {app as electronApp} from 'electron';
 
 const subscriptionManager = new SubscriptionManager();
 const channelMap: Map<string, ProviderIdentity> = new Map();
-const pendingChannelConnections: Map<string, any[]> = new Map();
 
 const CHANNEL_APP_ACTION = 'process-channel-message';
 const CHANNEL_ACK_ACTION = 'send-channel-result';
@@ -24,11 +24,6 @@ interface AckToSender {
         success: boolean
     };
 }
-
-const getChannelId = (identity: Identity, channelName: string): string => {
-    const { uuid, name } = identity;
-    return `${uuid}/${name}/${channelName}`;
-};
 
 const createAckToSender = (identity: Identity, messageId: number, providerIdentity: ProviderIdentity): AckToSender => {
     return {
@@ -79,8 +74,8 @@ export module Channel {
             throw new Error(nackString);
         }
 
-        const providerApp = getExternalOrOfWindowIdentity(identity);
-        const channelId = getChannelId(identity, channelName);
+        const providerApp = getEntityIdentity(identity);
+        const channelId = electronApp.generateGUID();
         const providerIdentity = { ...providerApp, channelName, channelId };
         channelMap.set(channelId, providerIdentity);
 
@@ -127,18 +122,15 @@ export module Channel {
     }
 
     export function disconnectFromChannel(identity: Identity, channelName: string): void {
-        // If a channel has already been created with that channelName
         const disconnectedEvent = 'client-disconnected';
         subscriptionManager.removeSubscription(identity, `${disconnectedEvent}-${channelName}`);
     }
 
     export function connectToChannel(identity: Identity, payload: any, messageId: number, ack: AckFunc, nack: NackFunc): void {
         const { channelName, payload: connectionPayload } = payload;
-
-        const connectingWindow = getExternalOrOfWindowIdentity(identity);
         const providerIdentity = Channel.getChannelByChannelName(channelName);
 
-        if (connectingWindow && connectingWindow.isExternal && connectionPayload && connectionPayload.nameAlias) {
+        if (connectionPayload && connectionPayload.nameAlias) {
             identity.name = connectionPayload.nameAlias;
         }
 
@@ -182,6 +174,10 @@ export module Channel {
     export function sendChannelMessage(identity: Identity, payload: any, messageId: number, ack: AckFunc, nack: NackFunc): void {
         const { uuid, name, payload: messagePayload, action: channelAction, providerIdentity } = payload;
         const intendedTargetIdentity = { uuid, name };
+
+        if (messagePayload && messagePayload.nameAlias) {
+            identity.name = messagePayload.nameAlias;
+        }
 
         const ackToSender = createAckToSender(identity, messageId, providerIdentity);
 

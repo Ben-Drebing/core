@@ -33,26 +33,19 @@ const { apiString, initialOptions } = JSON.parse(apiInfo);
 // let chromiumWindowAlertEnabled = electron.remote.app.getCommandLineArguments().includes('--enable-chromium-window-alert');
 
 const hookWebFrame = (webFrame, renderFrameId) => {
-    electron.ipcRendererInternal.on(`ELECTRON_INTERNAL_RENDERER_WEB_FRAME_METHOD-${renderFrameId}`, (event, method, args) => {
-        webFrame[method](...args);
-    });
-
-    electron.ipcRendererInternal.on(`ELECTRON_INTERNAL_RENDERER_ASYNC_WEB_FRAME_METHOD-${renderFrameId}`, (event, requestId, method, args) => {
-        new Promise(resolve => {
-            webFrame[method](...args, resolve);
-        }).then(result => {
+    electron.ipcRendererInternal.on(`ELECTRON_INTERNAL_RENDERER_WEB_FRAME_METHOD-${renderFrameId}`, (event, requestId, method, ...args) => {
+        new Promise(resolve => resolve(webFrame[method](...args))).then(result => {
             return [null, result];
         }, error => {
             return [error];
         }).then(responseArgs => {
-            event.sender.send(renderFrameId, `ELECTRON_INTERNAL_BROWSER_ASYNC_WEB_FRAME_RESPONSE_${requestId}`, ...responseArgs);
+            event.sender.send(renderFrameId, `ELECTRON_INTERNAL_RENDERER_WEB_FRAME_METHOD_RESPONSE_${requestId}`, ...responseArgs);
         });
     });
 
     // Teardown
     return () => {
         electron.ipcRendererInternal.removeAllListeners(`ELECTRON_INTERNAL_RENDERER_WEB_FRAME_METHOD-${renderFrameId}`);
-        electron.ipcRendererInternal.removeAllListeners(`ELECTRON_INTERNAL_RENDERER_ASYNC_WEB_FRAME_METHOD-${renderFrameId}`);
     };
 };
 
@@ -110,15 +103,18 @@ const registerAPI = (w, routingId, isMainFrame, isSameOriginIframe, isCrossOrigi
 
         w = undefined;
 
-        try {
-            electron.ipcRenderer.emit('post-api-injection', routingId);
-            electron.ipcRenderer.emit(`post-api-injection-${routingId}`);
-        } catch (error) {
-            console.error(`Error notifying post-api-injection for ${routingId}`);
-            console.error(error.stack);
-        } finally {
-            electron.ipcRenderer.removeAllListeners(`post-api-injection-${routingId}`);
-        }
+        // Execute after all other modules have been evaluated
+        electron.ipcRenderer.once('api-modules-evaluated', () => {
+            try {
+                electron.ipcRenderer.emit('post-api-injection', routingId);
+                electron.ipcRenderer.emit(`post-api-injection-${routingId}`);
+            } catch (error) {
+                console.error(`Error notifying post-api-injection for ${routingId}`);
+                console.error(error.stack);
+            } finally {
+                electron.ipcRenderer.removeAllListeners(`post-api-injection-${routingId}`);
+            }
+        });
 
         if (inboundMessageTopic.length) {
             teardownHandlers.push(() => {
@@ -141,6 +137,18 @@ const registerAPI = (w, routingId, isMainFrame, isSameOriginIframe, isCrossOrigi
         console.error(error);
         console.error(error.stack);
         electron.ipcRenderer.send(routingId, 'api-injection-failed', routingId);
+    } finally {
+        if (w) {
+            delete w.require;
+            delete w.process;
+            delete w.module;
+            delete w.Buffer;
+            delete w.routingId;
+            delete w.isMainFrame;
+            delete w.global;
+            delete w.getFrameData;
+            w = undefined;
+        }
     }
 
     susbcribeForTeardown(routingId, teardownHandlers);

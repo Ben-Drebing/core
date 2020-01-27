@@ -7,6 +7,7 @@ let os = require('os');
 let path = require('path');
 let electron = require('electron');
 let queryString = require('querystring');
+let url = require('url');
 let BrowserWindow = electron.BrowserWindow;
 let electronApp = electron.app;
 let dialog = electron.dialog;
@@ -22,17 +23,17 @@ let _ = require('underscore');
 let System = require('./system.js').System;
 import { Window } from './window';
 let convertOpts = require('../convert_options.js');
-let coreState = require('../core_state.js');
+import * as coreState from '../core_state';
 let externalApiBase = require('../api_protocol/api_handlers/api_protocol_base');
 import { cachedFetch, fetchReadFile } from '../cached_resource_fetcher';
 import ofEvents from '../of_events';
 import WindowGroups from '../window_groups';
 import { sendToRVM } from '../rvm/utils';
-import { validateNavigationRules } from '../navigation_validation';
+import { validateApplicationNavigation } from '../navigation_validation';
 import * as log from '../log';
 import SubscriptionManager from '../subscription_manager';
 import route from '../../common/route';
-import { isAboutPageUrl, isValidChromePageUrl, isFileUrl, isHttpUrl, isURLAllowed, getIdentityFromObject } from '../../common/main';
+import { isAboutPageUrl, isValidChromePageUrl, isFileUrl, isHttpUrl, isURLAllowed, getIdentityFromObject, isBase64 } from '../../common/main';
 import { ERROR_BOX_TYPES } from '../../common/errors';
 import { deregisterAllRuntimeProxyWindows } from '../window_groups_runtime_proxy';
 import { releaseUuid } from '../uuid_availability';
@@ -121,8 +122,14 @@ electronApp.on('ready', function() {
 Application.create = function(opts, configUrl = '', parentIdentity = {}) {
     //Hide Window until run is called
 
-    let appUrl = opts.url;
-    const { uuid, name } = opts;
+    let appUrl;
+    const { uuid, name, customFrame } = opts;
+
+    if (customFrame) {
+        convertOpts.toCustomFrame(opts);
+    }
+
+    appUrl = opts.url;
     const initialAppOptions = Object.assign({}, opts);
 
     if (appUrl === undefined && opts.mainWindowOptions) {
@@ -151,7 +158,7 @@ Application.create = function(opts, configUrl = '', parentIdentity = {}) {
     }
 
     const parentUuid = parentIdentity && parentIdentity.uuid;
-    if (!validateNavigationRules(uuid, appUrl, parentUuid, opts)) {
+    if (!validateApplicationNavigation(appUrl, uuid, opts, parentUuid)) {
         throw new Error(`Application with specified URL is not allowed: ${opts.appUrl}`);
     }
 
@@ -391,7 +398,7 @@ Application.getInfo = function(identity, callback) {
 Application.getWindow = function(identity) {
     let uuid = identity.uuid;
 
-    return Window.wrap(uuid, uuid);
+    return coreState.getWindowByUuidName(uuid, uuid);
 };
 
 Application.grantAccess = function() {
@@ -749,10 +756,9 @@ function run(identity, mainWindowOpts, userAppConfigArgs) {
     const { preloadScripts } = mainWindowOpts;
     const loadUrl = () => {
         app.mainWindow.loadURL(app._options.url);
-        coreState.setAppRunningState(uuid, true);
         ofEvents.emit(route.application('started', uuid), { topic: 'application', type: 'started', uuid });
     };
-
+    coreState.setAppRunningState(uuid, true);
     if (isValidChromePageUrl(app._options.url) || appWasAlreadyRunning) {
         loadUrl();
         // no API injection for chrome pages, so call .show here
@@ -771,21 +777,40 @@ function run(identity, mainWindowOpts, userAppConfigArgs) {
 /**
  * Run an application via RVM Call
  */
-Application.runWithRVM = function(manifestUrl, appIdentity) {
+Application.runWithRVM = function(manifestUrl, appIdentity, opts = {}) {
     const { uuid } = appIdentity;
     // on mac/linux, launch the app, else hand off to RVM
     if (os.platform() !== 'win32') {
         return launch({ manifestUrl: manifestUrl });
     } else {
+        if (opts.userAppConfigArgs) {
+            opts.userAppConfigArgsStr = new url.URLSearchParams(opts.userAppConfigArgs).toString();
+            delete opts.userAppConfigArgs;
+        }
         return sendToRVM({
             topic: 'application',
             action: 'launch-app',
             sourceUrl: coreState.getConfigUrlByUuid(uuid),
             data: {
-                configUrl: manifestUrl
+                configUrl: manifestUrl,
+                rvmLaunchOptions: opts
             }
         });
     }
+};
+
+/**
+ * Run an application via RVM
+ */
+Application.batchRunWithRVM = function(identity, manifestUrls) {
+    return sendToRVM({
+        topic: 'application',
+        action: 'launch-apps',
+        sourceUrl: coreState.getConfigUrlByUuid(identity.uuid),
+        data: {
+            configUrlArray: manifestUrls
+        }
+    });
 };
 
 Application.send = function() {
@@ -848,12 +873,20 @@ Application.setTrayIcon = function(identity, iconUrl, callback, errorCallback) {
 
     const mainWindowIdentity = app.identity;
 
-    iconUrl = Window.getAbsolutePath(mainWindowIdentity, iconUrl);
+    if (!isBase64(iconUrl)) {
+        iconUrl = Window.getAbsolutePath(mainWindowIdentity, iconUrl);
+    }
 
     cachedFetch(mainWindowIdentity, iconUrl, (error, iconFilepath) => {
         if (!error) {
             if (app) {
-                const iconImage = nativeImage.createFromPath(iconFilepath);
+                let iconImage;
+                if (isBase64(iconUrl)) {
+                    const imageBuf = Buffer.from(iconUrl, 'base64');
+                    iconImage = nativeImage.createFromBuffer(imageBuf);
+                } else {
+                    iconImage = nativeImage.createFromPath(iconFilepath);
+                }
                 const icon = app.tray = new Tray(iconImage);
                 const monitorInfo = MonitorInfo.getInfo('system-query');
                 const clickedRoute = route.application('tray-icon-clicked', app.uuid);
@@ -1008,6 +1041,12 @@ Application.emitRunRequested = function(identity, userAppConfigArgs) {
 Application.wait = function() {
     console.warn('Awaiting native implementation');
 };
+Application.getViews = getViews;
+
+function getViews(identity) {
+    const app = coreState.getAppByUuid(identity.uuid);
+    return app ? app.views.map(({ uuid, name }) => ({ uuid, name })) : [];
+}
 
 // support legacy notifyOnContentLoaded and notifyOnContentLoaded
 var appLoadedListeners = {}; // target window identity => array of window Ids for listener
@@ -1164,7 +1203,7 @@ function createAppObj(uuid, opts, configUrl = '') {
 
         appObj.mainWindow = new BrowserWindow(eOpts);
         appObj.mainWindow.setFrameConnectStrategy(eOpts.frameConnect || 'last');
-        appObj.id = appObj.mainWindow.id;
+        appObj.id = appObj.mainWindow.webContents.id;
 
         appObj.mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
             if (isMainFrame) {

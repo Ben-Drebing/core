@@ -18,6 +18,7 @@ import {
 import { ActionSpecMap } from '../shapes';
 import {hijackMovesForGroupedWindows} from './grouped_window_moves';
 import { argo } from '../../core_state';
+import { System } from '../../api/system';
 
 const successAck: APIPayloadAck = { success: true };
 
@@ -25,6 +26,7 @@ export const windowApiMap = {
     'animate-window': animateWindow,
     'blur-window': blurWindow,
     'bring-window-to-front': bringWindowToFront,
+    'center-window': centerWindow,
     'close-window': closeWindow,
     'disable-window-frame': disableUserMovement,
     'dock-window': dockWindow,
@@ -58,7 +60,6 @@ export const windowApiMap = {
     'show-window': showWindow,
     'set-foreground-window': setForegroundWindow,
     'set-window-bounds': setWindowBounds,
-    'set-window-preload-state': setWindowPreloadState,
     'show-at-window': showAtWindow,
     'stop-flash-window': stopFlashWindow,
     'undock-window': undockWindow,
@@ -66,6 +67,7 @@ export const windowApiMap = {
     'window-authenticate': windowAuthenticate,
     'window-embedded': windowEmbedded,
     'window-exists': windowExists,
+    'window-get-views': getViews,
     'window-get-cached-bounds': getCachedBounds
 };
 
@@ -121,14 +123,6 @@ function setWindowBounds(identity: Identity, message: APIMessage, ack: Acker, na
     const { top, left, width, height } = payload;
     const {uuid, name} = getTargetWindowIdentity(payload);
     Window.setBounds({ uuid, name }, left, top, width, height, () => ack(successAck), nack);
-}
-
-function setWindowPreloadState(identity: Identity, message: APIMessage, ack: Acker): void {
-    const { payload } = message;
-    const windowIdentity = getTargetWindowIdentity(identity);
-
-    Window.setWindowPreloadState(windowIdentity, payload);
-    ack(successAck);
 }
 
 function setForegroundWindow(identity: Identity, message: APIMessage, ack: Acker): void {
@@ -244,11 +238,15 @@ function leaveWindowGroup(identity: Identity, message: APIMessage, ack: Acker): 
     return Window.leaveGroup(windowIdentity).then(() => ack(successAck));
 }
 
-function joinWindowGroup(identity: Identity, message: APIMessage, ack: Acker): Promise<void> {
+function joinWindowGroup(identity: Identity, message: APIMessage, ack: Acker, nack: (error: Error) => void): Promise<void> {
     const { payload } = message;
     const windowIdentity = getTargetWindowIdentity(payload);
     const groupingIdentity = getGroupingWindowIdentity(payload);
-
+    if (System.getAllExternalWindows().some(w => w.uuid === groupingIdentity.uuid)) {
+        // nack if joining an ExternalWindow since certain methods don't work without injection
+        nack(new Error('Joining a group with an ExternalWindow is not supported'));
+        return;
+    }
     return Window.joinGroup(windowIdentity, groupingIdentity).then(() => ack(successAck));
 }
 
@@ -460,4 +458,18 @@ function registerWindowName(identity: Identity, message: APIMessage, ack: Acker)
 
     Window.registerWindowName(windowIdentity);
     ack(successAck);
+}
+
+function centerWindow(identity: Identity, message: APIMessage, ack: Acker): void {
+    const { payload } = message;
+    const windowIdentity = getTargetWindowIdentity(payload);
+
+    Window.center(windowIdentity);
+    ack(successAck);
+}
+
+function getViews(identity: Identity, message: APIMessage, ack: Acker): void {
+    const { payload } = message;
+    const windowIdentity = getTargetWindowIdentity(payload);
+    return Window.getViews(windowIdentity);
 }

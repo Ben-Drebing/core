@@ -71,7 +71,7 @@ module.exports = (grunt) => {
         copy: {
             assets: { // assets: images, htmls, icons
                 files: [{
-                    src: ['assets/*'],
+                    src: ['assets/**/*'],
                     dest: 'staging/core/'
                 }]
             },
@@ -304,10 +304,18 @@ module.exports = (grunt) => {
     grunt.registerTask('rebuild-native-modules', 'Rebuild native modules', function() {
         const done = this.async();
 
-        electronRebuild.rebuild({
+        const rebuildOptions = {
             buildPath: __dirname,
-            electronVersion: '4.2.0'
-        }).then(() => {
+            electronVersion: '7.0.0-beta.3'
+        };
+
+        // don't rebuild the optionalDependencies since they're only used
+        // on non-Windows systems
+        if (process.platform === 'win32') {
+            rebuildOptions.types = ['prod'];
+        }
+
+        electronRebuild.rebuild(rebuildOptions).then(() => {
             grunt.log.writeln('Rebuild successful!');
             done();
         }).catch(e => {

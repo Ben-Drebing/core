@@ -128,6 +128,13 @@
         });
     }
 
+    function entityExistsSync(uuid, name) {
+        return syncApiCall('entity-exists', {
+            uuid,
+            name
+        });
+    }
+
     function registerWindowNameSync(uuid, name) {
         syncApiCall('register-window-name', {
             uuid,
@@ -148,6 +155,13 @@
 
     function raiseEventSync(eventName, eventArgs) {
         return syncApiCall('raise-event', {
+            eventName,
+            eventArgs
+        });
+    }
+
+    function raiseEventAsync(eventName, eventArgs) {
+        return asyncApiCall('raise-event', {
             eventName,
             eventArgs
         });
@@ -328,7 +342,7 @@
                 name: initialOptions.name,
                 uuid: initialOptions.uuid
             };
-            raiseEventSync(`window/performance-report/${initialOptions.uuid}-${initialOptions.name}`, Object.assign(payload, performance.toJSON()));
+            raiseEventAsync(`window/performance-report/${initialOptions.uuid}-${initialOptions.name}`, Object.assign(payload, performance.toJSON()));
             asyncApiCall('write-to-log', {
                 level: 'info',
                 message: `[Performance] [${initialOptions.uuid} - ${initialOptions.name}]: ${JSON.stringify(performance)}`
@@ -374,10 +388,13 @@
     const originalOpen = global.open;
 
     function openChildWindow(...args) {
+        if (entityInfo.entityType === 'view') {
+            throw new Error('Can not create a window inside a BrowserView');
+        }
         const [url, requestedName, features = ''] = args; // jshint ignore:line
         const requestId = ++childWindowRequestId;
         const webContentsId = getWebContentsId();
-        const name = requestedName && !windowExistsSync(initialOptions.uuid, requestedName) ? requestedName : fin.desktop.getUuid();
+        const name = requestedName && !entityExistsSync(initialOptions.uuid, requestedName) ? requestedName : fin.desktop.getUuid();
         const responseChannel = `${name}-created`;
 
         const options = Object.assign(featuresToOptionsObj(features), {
@@ -429,10 +446,8 @@
                 ipc.once(popResponseChannel, (sender, meta) => {
                     setTimeout(() => {
                         try {
-                            let returnMeta = JSON.parse(meta);
                             cb({
                                 nativeWindow,
-                                id: returnMeta.windowId
                             });
                         } catch (e) {}
                     }, 1);
@@ -599,6 +614,7 @@
             getWindowIdentity: getWindowIdentitySync,
             getCurrentWindowId: getWindowId,
             windowExists: windowExistsSync,
+            entityExists: entityExistsSync,
             registerWindowName: registerWindowNameSync,
             ipcconfig: getIpcConfigSync(),
             createChildWindow: createChildWindow,

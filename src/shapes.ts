@@ -15,6 +15,7 @@ export interface Identity {
     name?: string;
     runtimeUuid?: string;
     entityType?: EntityType;
+    parentFrame?: string;
 }
 
 export interface ProviderIdentity extends Identity {
@@ -28,7 +29,13 @@ export interface ResourceFetchIdentity extends Identity {
     resourceFetch?: boolean;
 }
 
-export type EntityType = 'window' | 'iframe' | 'external connection' | 'unknown';
+export enum EntityType {
+   WINDOW = 'window',
+   IFRAME = 'iframe',
+   EXTERNAL = 'external connection',
+   VIEW = 'view',
+   UNKNOWN = 'unknown'
+}
 export type AuthCallback = (username: string, password: string) => void;
 export type Listener = (...args: any[]) => void;
 
@@ -87,7 +94,7 @@ export interface App {
     parentUuid?: string;
     sentHideSplashScreen: boolean;
     uuid: string;
-    views: OfView[];
+    readonly views: ReadonlyArray<OfView>;
 }
 
 export interface Window {
@@ -101,28 +108,26 @@ export interface InjectableContext {
     name: string;
     _options: WebOptions;
     frames: Map<string, ChildFrameInfo>;
+    preloadScripts: PreloadScript[];
+    framePreloadScripts: { [frame: string]: PreloadScript[] };
 }
 export interface WebOptions {
+    preloadScripts?: PreloadScript[];
     uuid: string;
     name: string;
 }
 export interface OpenFinWindow extends InjectableContext {
     isIframe?: boolean;
-    parentFrameId?: number;
     _options: WindowOptions;
     _window: BrowserWindow;
     app_uuid: string;
     browserWindow: BrowserWindow;
     children: OpenFinWindow[];
-    frames: Map<string, ChildFrameInfo>;
     forceClose: boolean;
     groupUuid: string|null;
     hideReason: string;
     id: number;
-    preloadScripts: PreloadScriptState[];
-    mainFrameRoutingId: number;
     isProxy?: boolean;
-    view?: OfView;
 }
 
 export interface BrowserWindow extends BrowserWindowElectron {
@@ -319,11 +324,8 @@ export interface Manifest {
 
 export interface PreloadScript {
     mandatory?: boolean;
+    state?: 'load-started' | 'load-failed' | 'load-succeeded' | 'failed' | 'succeeded';
     url: string;
-}
-
-export interface PreloadScriptState extends PreloadScript {
-    state: 'load-started'|'load-failed'|'load-succeeded'|'failed'|'succeeded';
 }
 
 export interface EventPayload {
@@ -433,13 +435,6 @@ export interface ShowWindowAtOpts extends MoveWindowToOpts {
     force?: boolean;
 }
 
-export interface Bounds {
-    height: number;
-    width: number;
-    x: number;
-    y: number;
-}
-
 export interface CoordinatesXY {
     x: number;
     y: number;
@@ -462,19 +457,30 @@ export interface ExternalWindow extends BrowserWindowElectron {
     name: string;
     uuid: string;
 }
+interface NativeWinIdUuidOptional {
+    nativeId: string;
+    uuid?: string;
+    name?: string;
+}
+
+interface NativeWinIdNativeIdOptional extends Identity {
+    nativeId?: string;
+}
+
+export type NativeWindowIdentity = NativeWinIdUuidOptional | NativeWinIdNativeIdOptional;
 
 export interface Process extends Omit<ProcessElectron, 'imageName'> {
     injected: boolean;
     pid: number;
 }
 
-export interface NativeWindowInfo extends Omit<NativeWindowInfoElectron, 'process'> {
+export interface NativeWindowInfo extends Omit<NativeWindowInfoElectron, 'process'|'id'> {
     process: Process;
     name: string;
     uuid: string;
 }
 
-export type NativeWindowInfoLite = Pick<NativeWindowInfo, 'name'|'process'|'title'|'uuid'|'visible'>;
+export type NativeWindowInfoLite = (Pick<NativeWindowInfo, 'name'|'process'|'title'|'uuid'|'visible'>) & { nativeId: string };
 
 export type GroupWindow = (ExternalWindow | OpenFinWindow) & {
     isExternalWindow?: boolean;
@@ -483,3 +489,42 @@ export type GroupWindow = (ExternalWindow | OpenFinWindow) & {
 export interface GroupWindowIdentity extends Identity {
     isExternalWindow?: boolean;
 }
+
+export interface CustomFrameOptions {
+    uuid: string;
+    name: string;
+    layout: LayoutConfig;
+}
+
+export interface LayoutConfig {
+    settings: {
+        popoutWholeStack?: boolean;
+        constrainDragToContainer?: boolean;
+        showPopoutIcon?: boolean;
+        showMaximiseIcon?: boolean;
+        showCloseIcon?: boolean;
+    };
+    content: LayoutContent;
+}
+
+export type LayoutContent = (LayoutRow|LayoutColumn|LayoutComponent)[];
+
+export interface LayoutRow {
+    type: 'row';
+    content: LayoutContent;
+}
+
+export interface LayoutColumn {
+    type: 'column';
+    content: LayoutContent;
+}
+
+export interface LayoutComponent {
+    type: 'component';
+    componentName: string;
+    componentState: {
+        identity: Identity;
+        url: string;
+    };
+}
+

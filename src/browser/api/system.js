@@ -6,7 +6,7 @@ const electronApp = electron.app;
 const electronBrowserWindow = electron.BrowserWindow;
 const session = electron.session;
 const shell = electron.shell;
-const { crashReporter, idleState } = electron;
+const { crashReporter, IdleState } = electron;
 
 // npm modules
 const path = require('path');
@@ -27,9 +27,10 @@ import route from '../../common/route';
 import { downloadScripts, loadScripts } from '../preload_scripts';
 import { fetchReadFile } from '../cached_resource_fetcher';
 import { createChromiumSocket, authenticateChromiumSocket } from '../transports/chromium_socket';
-import { authenticateFetch, clearCacheInvoked } from '../cached_resource_fetcher';
+import { authenticateFetch, grantAccess } from '../cached_resource_fetcher';
 import { getNativeWindowInfoLite } from '../utils';
 import { isValidExternalWindow } from './external_window';
+import { getWindowByUuidName, getBrowserViewByIdentity, getInfoByUuidFrame } from '../core_state';
 
 const defaultProc = {
     getCpuUsage: function() {
@@ -163,15 +164,16 @@ export const System = {
         };
 
         electronApp.vlog(1, `clearCache ${JSON.stringify(storages)}`);
-        clearCacheInvoked(true);
 
-        defaultSession.clearCache(() => {
-            defaultSession.clearStorageData(cacheOptions, () => {
+        grantAccess(async () => {
+            try {
+                await defaultSession.clearCache();
+                await defaultSession.clearStorageData(cacheOptions);
                 resolve();
-            });
+            } catch (e) {
+                resolve(e);
+            }
         });
-
-
     },
     createProxySocket: function(options, callback, errorCallback) {
         createChromiumSocket(Object.assign({}, options, { callback, errorCallback }));
@@ -199,6 +201,9 @@ export const System = {
         } else {
             errorCallback('Failed to send a message to the RVM.');
         }
+    },
+    entityExists: function({ uuid, name }) {
+        return getWindowByUuidName(uuid, name) || getBrowserViewByIdentity({ uuid, name }) || getInfoByUuidFrame({ uuid, name });
     },
     exit: function() {
         electronApp.quit();
@@ -288,7 +293,7 @@ export const System = {
         return uuid ? { uuid } : null;
     },
     getHostSpecs: function() {
-        let state = new idleState();
+        let state = new IdleState();
         const theme = (process.platform === 'win32') ? { aeroGlassEnabled: electronApp.isAeroGlassEnabled() } : {};
         return Object.assign({
             cpus: os.cpus(),
@@ -302,11 +307,12 @@ export const System = {
         }, theme);
     },
     getInstalledRuntimes: function(identity, callback, errorCallback) {
-        let getInstalledRuntimesOpts = {
+        var getInstalledRuntimesOpts = {
+            uuid: identity.uuid,
             sourceUrl: coreState.getConfigUrlByUuid(identity.uuid)
         };
 
-        let handleResponse = function(dataObj) {
+        var handleResponse = function(dataObj) {
             var failed = _.has(dataObj, 'time-to-live-expiration');
             if (!failed) {
                 callback(dataObj.payload);
@@ -612,22 +618,13 @@ export const System = {
         opts.expirationDate = Date.now() + timeToLive;
         opts.session = opts.session ? opts.session : opts.httpOnly;
 
-        session.defaultSession.cookies.set(opts, function(error) {
-            if (!error) {
-                callback();
-            } else {
-                errorCallback(error);
-            }
-        });
+        session.defaultSession.cookies.set(opts).then(callback).catch(error => errorCallback(error));
     },
     getCookies: function(opts, callback, errorCallback) {
         const { url, name } = opts;
         if (url && url.length > 0 && name && name.length > 0) {
-            session.defaultSession.cookies.get({ url, name }, (error, cookies) => {
-                if (error) {
-                    log.writeToLog(1, `cookies.get error ${error}`, true);
-                    errorCallback(error);
-                } else if (cookies.length > 0) {
+            session.defaultSession.cookies.get({ url, name }).then(cookies => {
+                if (cookies.length > 0) {
                     const data =
                         cookies.filter(cookie => !cookie.httpOnly).map(cookie => {
                             return {
@@ -647,13 +644,16 @@ export const System = {
                     log.writeToLog(1, `cookies result ${cookies.length}`, true);
                     errorCallback(`Cookie not found ${name}`);
                 }
+            }).catch(error => {
+                log.writeToLog(1, `cookies.get error ${error}`, true);
+                errorCallback(error);
             });
         } else {
             errorCallback(`Error getting cookies`);
         }
     },
     flushCookieStore: function(callback) {
-        session.defaultSession.cookies.flushStore(callback);
+        session.defaultSession.cookies.flushStore().then(callback);
     },
     generateGUID: function() {
         return electronApp.generateGUID();

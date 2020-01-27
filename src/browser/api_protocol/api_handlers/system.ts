@@ -53,12 +53,17 @@ export const SystemApiMap: APIHandlerMap = {
     'download-asset': { apiFunc: downloadAsset, apiPath: '.downloadAsset', defaultPermission: false },
     'download-preload-scripts': { apiFunc: downloadPreloadScripts, apiPath: '.downloadPreloadScripts'},
     'download-runtime': { apiFunc: downloadRuntime, apiPath: '.downloadRuntime' },
+    'entity-exists': entityExists,
     'exit-desktop': { apiFunc: exitDesktop, apiPath: '.exit' },
     'flush-cookie-store': { apiFunc: flushCookieStore, apiPath: '.flushCookieStore' },
     'generate-guid': generateGuid,
     'get-all-applications': getAllApplications,
     'get-all-external-applications': getAllExternalApplications,
-    'get-all-external-windows': getAllExternalWindows,
+    'get-all-external-windows': {
+        apiFunc: getAllExternalWindows,
+        apiPath: '.getAllExternalWindows',
+        defaultPermission: false
+    },
     'get-all-windows': getAllWindows,
     'get-app-asset-info': getAppAssetInfo,
     'get-command-line-arguments': { apiFunc: getCommandLineArguments, apiPath: '.getCommandLineArguments' },
@@ -71,7 +76,7 @@ export const SystemApiMap: APIHandlerMap = {
     'get-focused-window': getFocusedWindow,
     'get-focused-external-window': getFocusedExternalWindow,
     'get-host-specs': { apiFunc: getHostSpecs, apiPath: '.getHostSpecs' },
-    'get-installed-runtimes': getInstalledRuntimes,
+    'get-installed-runtimes': {apiFunc: getInstalledRuntimes, apiPath: '.getInstalledRuntimes' },
     'get-machine-id': { apiFunc: getMachineId, apiPath: '.getMachineId' },
     'get-min-log-level': getMinLogLevel,
     'get-monitor-info': { apiFunc: getMonitorInfo, apiPath: '.getMonitorInfo' },
@@ -627,5 +632,13 @@ function authenticateResourceFetch(identity: Identity, message: APIMessage, ack:
     const { payload } = message;
     const dataAck = Object.assign({}, successAck);
     dataAck.data = System.authenticateResourceFetch(identity, payload);
+    ack(dataAck);
+}
+
+function entityExists(identity: Identity, message: APIMessage, ack: Acker, nack: Nacker): void {
+    const { payload } = message;
+    const dataAck = Object.assign({}, successAck);
+
+    dataAck.data = System.entityExists(payload);
     ack(dataAck);
 }

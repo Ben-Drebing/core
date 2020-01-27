@@ -3,7 +3,7 @@ let apiProtocolBase = require('./api_protocol_base.js');
 import {
     ExternalApplication
 } from '../../api/external_application';
-let coreState = require('../../core_state.js');
+import * as coreState from '../../core_state';
 import ofEvents from '../../of_events';
 let _ = require('underscore');
 let log = require('../../log');
@@ -22,7 +22,7 @@ const AUTH_TYPE = {
 };
 
 var pendingAuthentications = new Map(),
-    electronApp = require('app'),
+    electronApp = require('electron').app,
     authenticationApiMap = {
         'request-external-authorization': onRequestExternalAuth,
         'request-authorization': onRequestAuthorization,
